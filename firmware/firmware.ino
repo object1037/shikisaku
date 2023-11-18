@@ -1,5 +1,15 @@
 #include <Adafruit_MMC56x3.h>
 
+const int TRIG_1 = 16;
+const int ECHO_1 = 10;
+const int TRIG_2 = 9;
+const int ECHO_2 = 8;
+
+const int dist1_min = 3;
+const int dist1_max = 40;
+const int dist2_min = 3;
+const int dist2_max = 40;
+
 typedef struct {
   float L;
   float C;
@@ -17,24 +27,24 @@ sensors_event_t mag_event;
 float min_x, max_x, mid_x;
 float min_y, max_y, mid_y;
 
-const int TRIG_1 = 16;
-const int ECHO_1 = 10;
-const int TRIG_2 = 9;
-const int ECHO_2 = 8;
+double dist1_lp = 0;
+double dist2_lp = 0;
 
-double duration = 0;
-double distance = 0;
+double lowpass(double sample, double prev, double rc) {
+  return sample - rc * (sample - prev);
+}
 
-double measure_distance(int TRIG, int ECHO) {
+double measure_distance(int TRIG, int ECHO, float temp) {
   digitalWrite(TRIG, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG, LOW);
-  duration = pulseIn(ECHO, HIGH);
+  double duration = pulseIn(ECHO, HIGH);
+  float velocity = 331.45 + 0.61 * temp;
 
   if (duration > 0) {
-    distance = duration / 2 / 1000000 * 340 * 100;
+    double distance = duration / 2 / 1000000 * velocity * 100;
     return distance;
   }
   return -1;
@@ -120,21 +130,27 @@ void loop() {
   float mag_y = 0;
   calibrate_mag(&mag_event, &mag_x, &mag_y);
 
-  float heading = get_heading(mag_x, mag_y);
+  float heading_rad = get_heading(mag_x, mag_y);
+  float heading_deg = heading_rad * 180 / M_PI;
 
-  double distance_1 = measure_distance(TRIG_1, ECHO_1);
-  double distance_2 = measure_distance(TRIG_2, ECHO_2);
+  float temp = mag.readTemperature();
+  double dist1_raw = measure_distance(TRIG_1, ECHO_1, temp);
+  double dist2_raw = measure_distance(TRIG_2, ECHO_2, temp);
+  dist1_lp = lowpass(constrain(dist1_raw, dist1_min, dist1_max), dist1_lp, 0.5);
+  dist2_lp = lowpass(constrain(dist2_raw, dist2_min, dist2_max), dist2_lp, 0.5);
 
-  Serial.print(F("Heading: "));
-  Serial.print(heading);
-
-  Serial.print(F(" Field: ("));
+  // Serial.print(F("Heading: "));
+  Serial.print(heading_deg); Serial.print(", ");
   Serial.print((max_x - min_x)/2); Serial.print(", ");
-  Serial.print((max_y - min_y)/2); Serial.print(")");
+  Serial.print((max_y - min_y)/2); Serial.print(", ");
 
-  Serial.print(F(" Dist: "));
-  Serial.print(distance_1); Serial.print(", ");
-  Serial.print(distance_2); Serial.println(")");
+  // Serial.print(F(" Dist: "));
+  Serial.print(dist1_raw); Serial.print(", ");
+  Serial.print(dist1_lp); Serial.print(", ");
+  Serial.print(dist2_raw); Serial.print(", ");
+  Serial.print(dist2_lp);
+
+  Serial.println();
 
   delay(200);
 }
