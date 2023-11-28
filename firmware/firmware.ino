@@ -4,6 +4,9 @@ const int TRIG_H = 16;
 const int ECHO_H = 10;
 const int TRIG_V = 9;
 const int ECHO_V = 8;
+const int LED_R = 6;
+const int LED_G = 9;
+const int LED_B = 10;
 
 const int DIST_H_MIN = 15;
 const int DIST_H_MAX = 27;
@@ -34,11 +37,11 @@ sensors_event_t mag_event;
 double dist_h_lp = 0;
 double dist_v_lp = 0;
 
-double lowpass(double sample, double prev, double rc) {
+double lowpass(const double sample, const double prev, const double rc) {
   return sample - rc * (sample - prev);
 }
 
-double measure_distance(int TRIG, int ECHO, double temp) {
+double measure_distance(const int TRIG, const int ECHO, const double temp) {
   digitalWrite(TRIG, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG, HIGH);
@@ -54,7 +57,7 @@ double measure_distance(int TRIG, int ECHO, double temp) {
   return -1;
 }
 
-double dist_percentage(double dist, int d_min, int d_max) {
+double dist_percentage(const double dist, const int d_min, const int d_max) {
   int range = d_max - d_min;
   return (dist - d_min) / range;
 }
@@ -88,7 +91,7 @@ double get_heading(const double x, const double y) {
   return heading;
 }
 
-double gamma_correction(double c) {
+double gamma_correction(const double c) {
   double abs = abs(c);
   int sign = 1;
   if (c < 0) {
@@ -97,10 +100,11 @@ double gamma_correction(double c) {
   if (abs <= 0.0031308) {
     return c * 12.92;
   }
+
   return sign * (1.055 * pow(abs, 1.0 / 2.4) - 0.055);
 }
 
-RGB_t oklch_to_rgb(LCh_t* lch) {
+RGB_t oklch_to_rgb(const LCh_t* lch) {
   double a = lch->C * cos(lch->h);
   double b = lch->C * sin(lch->h);
 
@@ -117,6 +121,16 @@ RGB_t oklch_to_rgb(LCh_t* lch) {
     .g = gamma_correction(-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s),
     .b = gamma_correction(-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s)
   };
+}
+
+int to_valid(const double c) {
+  return constrain(int(255 * c), 0, 255);
+}
+
+void light_LED(const RGB_t *rgb) {
+  analogWrite(LED_R, (int)(255 * to_valid(rgb->r)));
+  analogWrite(LED_G, (int)(255 * to_valid(rgb->g)));
+  analogWrite(LED_B, (int)(255 * to_valid(rgb->b)));
 }
 
 void setup() {
@@ -180,8 +194,9 @@ void loop() {
   Serial.print(255 * rgb.r); Serial.print(", ");
   Serial.print(255 * rgb.g); Serial.print(", ");
   Serial.print(255 * rgb.b); Serial.print(")");
-
   Serial.println();
+
+  light_LED(&rgb);
 
   delay(200);
 }
