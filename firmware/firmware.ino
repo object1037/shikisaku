@@ -1,12 +1,13 @@
 #include <Adafruit_MMC56x3.h>
+#include <Adafruit_NeoPixel.h>
+#include <avr/power.h>
 
-const int TRIG_H = 16;
-const int ECHO_H = 10;
-const int TRIG_V = 9;
-const int ECHO_V = 8;
-const int LED_R = 6;
-const int LED_G = 9;
-const int LED_B = 10;
+const int TRIG_H = 17;
+const int ECHO_H = 16;
+const int TRIG_V = 15;
+const int ECHO_V = 14;
+const int LED = 1;
+const int NUMLEDS = 8;
 
 const int DIST_H_MIN = 15;
 const int DIST_H_MAX = 27;
@@ -33,6 +34,8 @@ const double soft_iron[3][3] = {
 
 Adafruit_MMC5603 mag = Adafruit_MMC5603(12345);
 sensors_event_t mag_event;
+
+Adafruit_NeoPixel pixels(NUMLEDS, LED, NEO_GRB + NEO_KHZ800);
 
 double dist_h_lp = 0;
 double dist_v_lp = 0;
@@ -92,6 +95,7 @@ double get_heading(const double x, const double y) {
 }
 
 double gamma_correction(const double c) {
+  return c;
   double abs = abs(c);
   int sign = 1;
   if (c < 0) {
@@ -128,9 +132,10 @@ int to_valid(const double c) {
 }
 
 void light_LED(const RGB_t *rgb) {
-  analogWrite(LED_R, (int)(255 * to_valid(rgb->r)));
-  analogWrite(LED_G, (int)(255 * to_valid(rgb->g)));
-  analogWrite(LED_B, (int)(255 * to_valid(rgb->b)));
+  for (int i = 0; i < NUMLEDS; i++) {
+    pixels.setPixelColor(i, pixels.Color(to_valid(rgb->r), to_valid(rgb->g), to_valid(rgb->b)));
+  }
+  pixels.show();
 }
 
 void setup() {
@@ -140,6 +145,10 @@ void setup() {
   pinMode(TRIG_V, OUTPUT);
   pinMode(ECHO_H, INPUT);
   pinMode(ECHO_V, INPUT);
+
+  pixels.begin();
+  pixels.show();
+  pixels.setBrightness(25);
 
   if (!mag.begin(MMC56X3_DEFAULT_ADDRESS, &Wire)) {
     Serial.println(F("Could not find a magnetometer, check wiring!"));
@@ -161,6 +170,7 @@ void loop() {
   double heading_rad = get_heading(mag_x, mag_y);
   double heading_deg = heading_rad * 180 / M_PI;
 
+  /*
   double temp = mag.readTemperature();
   double dist_h_raw = measure_distance(TRIG_H, ECHO_H, temp);
   double dist_v_raw = measure_distance(TRIG_V, ECHO_V, temp);
@@ -168,6 +178,9 @@ void loop() {
   dist_v_lp = lowpass(constrain(dist_v_raw, DIST_V_MIN, DIST_V_MAX), dist_v_lp, 0.5);
   double h_perc = dist_percentage(dist_h_lp, DIST_H_MIN, DIST_H_MAX);
   double v_perc = dist_percentage(dist_v_lp, DIST_V_MIN, DIST_V_MAX);
+  */
+  double h_perc = 0.1284 / 0.3;
+  double v_perc = 0.7553;
 
   LCh_t lch = {
     .L = v_perc,
