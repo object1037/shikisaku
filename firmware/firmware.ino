@@ -1,18 +1,26 @@
 #include <Adafruit_MMC56x3.h>
 #include <Adafruit_NeoPixel.h>
 #include <avr/power.h>
+#include <Keyboard.h>
+#include <EEPROM.h>
 
-const int TRIG_H = 17;
-const int ECHO_H = 16;
-const int TRIG_V = 15;
-const int ECHO_V = 14;
+// #define DEBUG
+
+const int TRIG_H = 18;
+const int ECHO_H = 15;
+const int TRIG_V = 14;
+const int ECHO_V = 16;
 const int LED = 1;
 const int NUMLEDS = 8;
+const int KEY = 19;
 
 const int DIST_H_MIN = 15;
-const int DIST_H_MAX = 27;
-const int DIST_V_MIN = 18;
-const int DIST_V_MAX = 43;
+const int DIST_H_MAX = 25;
+const int DIST_V_MIN = 20;
+const int DIST_V_MAX = 40;
+
+const int HOLD_ADDR = 0;
+const int COLOR_ADDR = HOLD_ADDR + sizeof(bool);
 
 typedef struct {
   double L;
@@ -25,11 +33,11 @@ typedef struct {
   double b;
 } RGB_t;
 
-const double hard_iron[3] = {32.51, -21.84, 54.53};
+const double hard_iron[3] = {28.38, -42.28, 71.21};
 const double soft_iron[3][3] = {
-  {1.006, 0.018, 0.001},
-  {0.018, 0.956, -0.009},
-  {0.001, 0.009, 1.041}
+  {0.975, 0.01, 0.003},
+  {0.01, 1.015, -0.039},
+  {0.003, -0.039, 1.012}
 };
 
 Adafruit_MMC5603 mag = Adafruit_MMC5603(12345);
@@ -39,6 +47,17 @@ Adafruit_NeoPixel pixels(NUMLEDS, LED, NEO_GRB + NEO_KHZ800);
 
 double dist_h_lp = 0;
 double dist_v_lp = 0;
+
+RGB_t prev_color = {.r = 0, .g = 0, .b = 0};
+RGB_t cur_color = {.r = 0, .g = 0, .b = 0};
+int grad_idx = 0;
+
+unsigned long prev_time = 0;
+unsigned long prev_micros = 0;
+unsigned long loop_interval = 200;
+
+bool is_holding;
+RGB_t hold_color;
 
 double lowpass(const double sample, const double prev, const double rc) {
   return sample - rc * (sample - prev);
@@ -95,7 +114,6 @@ double get_heading(const double x, const double y) {
 }
 
 double gamma_correction(const double c) {
-  return c;
   double abs = abs(c);
   int sign = 1;
   if (c < 0) {
@@ -121,37 +139,91 @@ RGB_t oklch_to_rgb(const LCh_t* lch) {
   double s = s_*s_*s_;
 
   return {
-    .r = gamma_correction(+4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s),
-    .g = gamma_correction(-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s),
-    .b = gamma_correction(-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s)
+    .r = +4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
+    .g = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
+    .b = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s
   };
+}
+
+bool is_valid(const RGB_t *rgb) {
+  bool ans = true;
+  if (rgb->r < 0 || rgb->r > 1) ans = false;
+  if (rgb->g < 0 || rgb->g > 1) ans = false;
+  if (rgb->b < 0 || rgb->b > 1) ans = false;
+  return ans;
 }
 
 int to_valid(const double c) {
   return constrain(int(255 * c), 0, 255);
 }
 
-void light_LED(const RGB_t *rgb) {
-  for (int i = 0; i < NUMLEDS; i++) {
-    pixels.setPixelColor(i, pixels.Color(to_valid(rgb->r), to_valid(rgb->g), to_valid(rgb->b)));
+double nth_div(const double prev, const double cur, const int idx, const int n) {
+  double ans = prev + (cur - prev) / (n-1) * idx;
+  return ans;
+}
+
+void light_LED(const RGB_t *prev, RGB_t *cur, const int idx) {
+  for (int j = 0; j < NUMLEDS; j++) {
+    pixels.setPixelColor(j, pixels.Color(
+      to_valid(nth_div(prev->r, cur->r, idx, 8)),
+      to_valid(nth_div(prev->g, cur->g, idx, 8)),
+      to_valid(nth_div(prev->b, cur->b, idx, 8))
+    ));
   }
   pixels.show();
 }
 
-void setup() {
-  Serial.begin(9600);
+void light_LED_delay(const RGB_t *prev, const RGB_t *cur) {
+  for (int i = 0; i < 10; i++) {
+    for (int j = 0; j < NUMLEDS; j++) {
+      pixels.setPixelColor(j, pixels.Color(
+        to_valid(nth_div(prev->r, cur->r, i, 10)),
+        to_valid(nth_div(prev->g, cur->g, i, 10)),
+        to_valid(nth_div(prev->b, cur->b, i, 10))
+      ));
+    }
+    pixels.show();
+    delay(15);
+  }
+}
 
+void print_hex(const RGB_t *rgb) {
+  long R = to_valid(gamma_correction(rgb->r));
+  long G = to_valid(gamma_correction(rgb->g));
+  long B = to_valid(gamma_correction(rgb->b));
+  long RGB = (R << 16L) | (G << 8L) | B;
+  String hex = String("#" + String(RGB, HEX));
+  Keyboard.print(hex);
+}
+
+void setup() {
   pinMode(TRIG_H, OUTPUT);
   pinMode(TRIG_V, OUTPUT);
   pinMode(ECHO_H, INPUT);
   pinMode(ECHO_V, INPUT);
+  pinMode(KEY, INPUT_PULLUP);
+
+  Keyboard.begin();
+
+  EEPROM.get(HOLD_ADDR, is_holding);
+  EEPROM.get(COLOR_ADDR, hold_color);
+
+  if (is_holding) {
+    prev_color = hold_color;
+    cur_color = hold_color;
+  }
 
   pixels.begin();
   pixels.show();
-  pixels.setBrightness(25);
+  // pixels.setBrightness(75);
 
+#ifdef DEBUG
+  Serial.begin(9600);
+#endif
   if (!mag.begin(MMC56X3_DEFAULT_ADDRESS, &Wire)) {
+#ifdef DEBUG
     Serial.println(F("Could not find a magnetometer, check wiring!"));
+#endif
     while(1) delay(10);
   }
   delay(100);
@@ -162,41 +234,83 @@ void setup() {
 }
 
 void loop() {
+  unsigned long cur_time = millis();
+  if (is_holding || cur_time - prev_time < loop_interval) {
+    if (is_holding) {
+      light_LED(&hold_color, &hold_color, 7);
+    } else {
+      unsigned long cur_micros = micros();
+      if (cur_micros - prev_micros >= 10000) {
+        light_LED(&prev_color, &cur_color, grad_idx);
+        grad_idx++;
+        if (grad_idx >= 8) grad_idx = 7;
+        prev_micros = cur_micros;
+      }
+    }
+    if (digitalRead(KEY) == LOW) {
+      bool holded = false;
+      while (digitalRead(KEY) == LOW) {
+        unsigned long next_time = millis();
+        if (!holded && next_time - cur_time > 250) {
+          holded = true;
+          is_holding = !is_holding;
+          hold_color = cur_color;
+          EEPROM.put(HOLD_ADDR, is_holding);
+          EEPROM.put(COLOR_ADDR, hold_color);
+          const RGB_t black = {.r = 0, .g = 0, .b = 0};
+          light_LED_delay(&hold_color, &black);
+          light_LED_delay(&black, &hold_color);
+        }
+      }
+      if (!holded) {
+        print_hex(&cur_color);
+      }
+    }
+    return;
+  }
+  prev_color = cur_color;
+
   mag.getEvent(&mag_event);
   double mag_x = 0;
   double mag_y = 0;
   calibrate_mag(&mag_event, &mag_x, &mag_y);
 
   double heading_rad = get_heading(mag_x, mag_y);
-  double heading_deg = heading_rad * 180 / M_PI;
-
-  /*
+  
   double temp = mag.readTemperature();
-  double dist_h_raw = measure_distance(TRIG_H, ECHO_H, temp);
   double dist_v_raw = measure_distance(TRIG_V, ECHO_V, temp);
+  double dist_h_raw = measure_distance(TRIG_H, ECHO_H, temp);
   dist_h_lp = lowpass(constrain(dist_h_raw, DIST_H_MIN, DIST_H_MAX), dist_h_lp, 0.5);
   dist_v_lp = lowpass(constrain(dist_v_raw, DIST_V_MIN, DIST_V_MAX), dist_v_lp, 0.5);
   double h_perc = dist_percentage(dist_h_lp, DIST_H_MIN, DIST_H_MAX);
   double v_perc = dist_percentage(dist_v_lp, DIST_V_MIN, DIST_V_MAX);
-  */
-  double h_perc = 0.1284 / 0.3;
-  double v_perc = 0.7553;
 
   LCh_t lch = {
     .L = v_perc,
     .C = 0.3 * h_perc,
     .h = heading_rad
   };
-  RGB_t rgb = oklch_to_rgb(&lch);
+  cur_color = oklch_to_rgb(&lch);
 
+  if (!is_valid(&cur_color)) {
+    cur_color.r = 0;
+    cur_color.g = 0;
+    cur_color.b = 0;
+  }
+
+#ifdef DEBUG
   // Serial.print(F("Heading: "));
+  Serial.print(prev_time); Serial.print("->");
+  Serial.print(cur_time); Serial.print(" ");
+  double heading_deg = heading_rad * 180 / M_PI;
   Serial.print(heading_deg); Serial.print(", ");
+  Serial.print(temp); Serial.print(", ");
 
   // Serial.print(F(" Dist: "));
+  Serial.print(dist_h_raw); Serial.print(", ");
   Serial.print(dist_h_lp); Serial.print(", ");
-  Serial.print(h_perc); Serial.print(", ");
+  Serial.print(dist_v_raw); Serial.print(", ");
   Serial.print(dist_v_lp); Serial.print(", ");
-  Serial.print(v_perc); Serial.print(", ");
 
   Serial.print("lch(");
   Serial.print(lch.L, 5); Serial.print(", ");
@@ -204,12 +318,17 @@ void loop() {
   Serial.print(lch.h * 180 / M_PI); Serial.print(") -> ");
 
   Serial.print("rgb(");
-  Serial.print(255 * rgb.r); Serial.print(", ");
-  Serial.print(255 * rgb.g); Serial.print(", ");
-  Serial.print(255 * rgb.b); Serial.print(")");
+  Serial.print(255 * cur_color.r); Serial.print(", ");
+  Serial.print(255 * cur_color.g); Serial.print(", ");
+  Serial.print(255 * cur_color.b); Serial.print("), ");
+
+  Serial.print("prev(");
+  Serial.print(255 * prev_color.r); Serial.print(", ");
+  Serial.print(255 * prev_color.g); Serial.print(", ");
+  Serial.print(255 * prev_color.b); Serial.print(")");
   Serial.println();
+#endif
 
-  light_LED(&rgb);
-
-  delay(200);
+  prev_time = cur_time;
+  grad_idx = 0;
 }
