@@ -165,9 +165,9 @@ double nth_div(const double prev, const double cur, const int idx, const int n) 
 void light_LED(const RGB_t *prev, RGB_t *cur, const int idx) {
   for (int j = 0; j < NUMLEDS; j++) {
     pixels.setPixelColor(j, pixels.Color(
-      to_valid(nth_div(prev->r, cur->r, idx, 8)),
-      to_valid(nth_div(prev->g, cur->g, idx, 8)),
-      to_valid(nth_div(prev->b, cur->b, idx, 8))
+      to_valid(nth_div(prev->r, cur->r, idx, 10)),
+      to_valid(nth_div(prev->g, cur->g, idx, 10)),
+      to_valid(nth_div(prev->b, cur->b, idx, 10))
     ));
   }
   pixels.show();
@@ -243,7 +243,7 @@ void loop() {
       if (cur_micros - prev_micros >= 10000) {
         light_LED(&prev_color, &cur_color, grad_idx);
         grad_idx++;
-        if (grad_idx >= 8) grad_idx = 7;
+        if (grad_idx >= 10) grad_idx = 9;
         prev_micros = cur_micros;
       }
     }
