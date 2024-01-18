@@ -237,7 +237,7 @@ void loop() {
   unsigned long cur_time = millis();
   if (is_holding || cur_time - prev_time < loop_interval) {
     if (is_holding) {
-      light_LED(&hold_color, &hold_color, 7);
+      light_LED(&hold_color, &hold_color, 9);
     } else {
       unsigned long cur_micros = micros();
       if (cur_micros - prev_micros >= 10000) {
